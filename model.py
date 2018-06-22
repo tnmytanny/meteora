@@ -19,7 +19,8 @@ class Model:
 		self.batch_size = batch_size
 
 		self.input_signal = tf.placeholder(tf.float32, [self.batch_size, None, self.fn_filters], name='input_signal')
-		self.output_signal = tf.placeholder(tf.float32, [self.batch_size, None, self.n_filters], name='output_signal')
+		self.output_signal_1 = tf.placeholder(tf.float32, [self.batch_size, None, self.n_filters], name='output_signal1')
+		self.output_signal_2 = tf.placeholder(tf.float32, [self.batch_size, None, self.n_filters], name='output_signal2')
 
 	def _net(self):
 		rnn_layer = MultiRNNCell([GRUCell(self.hidden_size) for _ in range(self.n_layer)])
@@ -30,8 +31,9 @@ class Model:
 			initial_state=initial_state,
             dtype=tf.float32)
 		input_size = shape(self.input_signal)[2]
-		y_ = tf.layers.dense(inputs=outputs_rnn, units=input_size, activation=tf.nn.relu, name='dense')
-		return y_
+		y1_ = tf.layers.dense(inputs=outputs_rnn, units=input_size, activation=tf.nn.relu, name='dense')
+		y2_ = tf.layers.dense(inputs=outputs_rnn, units=input_size, activation=tf.nn.relu, name='dense')
+		return y1_,y2_
 
 	def loss(self):
-		return tf.reduce_mean(tf.square(self.output_signal - y_), name='loss')
+		return tf.reduce_mean(tf.square(self.output_signal_1 - y1_)+tf.square(self.output_signal_2 - y2_), name='loss')
