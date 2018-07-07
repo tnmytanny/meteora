@@ -1,52 +1,53 @@
 import boto3
 import os
-import tensorflow as tf
 import spectrogram as S
 import numpy as np
+import tensorflow as tf
+import scipy.io.wavfile as wavfile
+import matplotlib.pyplot as plt
+from tensorflow.contrib import rnn
+from tensorflow.contrib.layers import fully_connected as fc
 from PIL import Image
 
 s3 = boto3.resource('s3')
 my_bucket = s3.Bucket('tannyisback')
 
-# for obj in my_bucket.objects.all():
-#     print(str(obj.key))
-#     if str(obj).find('images/') != -1 and str(obj.key) != 'images/':
-#         print(str(obj.key))
-#         my_bucket.download_file(obj.key, os.path.join("Down", obj.key))
-#         print("done")
-#     elif str(obj).find('text/') != -1:
-#         print(str(obj.key))
-#         my_bucket.download_file(obj.key, os.path.join("Downn", obj.key))
-#         print("done")   
+for obj in my_bucket.objects.all():
+    print(str(obj.key))
+    if str(obj).find('images/') != -1 and str(obj.key) != 'images/':
+        print(str(obj.key))
+        my_bucket.download_file(obj.key, os.path.join("Down", obj.key))
+        print("done")
+    elif str(obj).find('text/') != -1:
+        print(str(obj.key))
+        my_bucket.download_file(obj.key, os.path.join("Downn", obj.key))
+        print("done")   
 
 i = []
-
 n_hidden = 128
+lstm_hidden = 200
+batch_size = 1
 
 def removeExtension(basename):
     lastDotPosition = basename.rindex(".")
-    # if (lastDotPosition === -1) return srcKey
     return basename[0:lastDotPosition]
 
 def getpicname(textfile):
     pic = 'Down/images/' + removeExtension(textfile) + '.jpg'
     return pic
 
-def helper(textfile):
-    # bucket='tannyisback'
-    # client=boto3.client('rekognition')
+def stringSplitByNumbers(x):
+    # r = re.compile('(\d+)')
+    # l = r.split(x)
+    # return [int(y) if y.isdigit() else y for y in l]
+    r = removeExtension(x)
+    r = r[-4:]
+    start = r[:-5]
+    sum = int(start + r)
+    return(sum)
 
-    # response = client.detect_faces(Image={'S3Object':{'Bucket':bucket,'Name':photo}},Attributes=['ALL'])
+def helper(textfile,frame_no):
 
-    # print('Detected faces for ' + photo)    
-    # for faceDetail in response['FaceDetails']:
-    #     print('The detected face is between ' + str(faceDetail['AgeRange']['Low']) + ' and ' + str(faceDetail['AgeRange']['High']) + ' years old')
-    #     print('Here are the other attributes:')
-    #     k = str(json.dumps(faceDetail, indent=4, sort_keys=True))
-    #     k_start = k.find('BoundingBox')
-    #     k_last = k.find('Confidence',k_start)
-    #     my_start = k[k_start+14:k_last-2]
-    #     print(my_start)
     photo = getpicname(textfile)
     my_text = 'Downn/text/' +textfile
     with open(my_text,'r') as dat:
@@ -65,21 +66,28 @@ def helper(textfile):
 
 if(__name__ == '__main__'):
     path = os.curdir+"/Downn/text"
-    print(path)
-    for filename in os.listdir(path):
-        print(filename)
-        helper(filename)
-    #--------------------------------------------------------------------#    
-    input_signal = S.open_wavfile()
-    float_signal = S.to_float(input_signal)
-    # resampled_signal = S.resample(input_signal)
-    spectrogram = S.audio_to_spectrogram(float_signal, 512, 160, 400)
+    filename = os.listdir(path)
+    print(filename)
+    filename_list = sorted(filename, key = stringSplitByNumbers)
+    print(filename_list)
+    for file in filename_list:
+        # no_ext = removeExtension(file)
+        # frame_no = int(no_ext[-4:])
+        print(file)
+        helper(file)
+#--------------------------------------------------------------------#    
+    input_signal = S.open_wavfile('Data/noise1.wav')
+    label_signal = S.open_wavfile('Data/clean1.wav')
+    spectrogram = S.audio_to_spectrogram(input_signal, 512, 160, 400)
+    label_spectrogram = S.audio_to_spectrogram(label_signal, 512, 160, 400)
     spectrogram = np.transpose(spectrogram)
-    print(spectrogram.shape[0])
+    label_spectrogram = np.transpose(label_spectrogram)
     y = spectrogram.shape[0]
+    z = label_spectrogram.shape[0]
     if y>298:
         spectrogram = spectrogram[:298-y,:]
-    print(spectrogram.shape)
+    if z>298:
+        label_spectrogram = label_spectrogram[:298-z,:]
 
     real_part = spectrogram.real
     imag_part = spectrogram.imag
@@ -87,11 +95,11 @@ if(__name__ == '__main__'):
     split_channel = np.array([[real_part, imag_part]])
     split_channel = split_channel.reshape([1,298,257,2])
     #--------------------------------------------------------------------# 
+    input_image = tf.reshape(i,[batch_size,75,1,1024],name = 'input_image')
+    images = tf.placeholder(dtype = tf.float32,shape = [batch_size,75,1,1024],name = 'images')
+    # images  = tf.reshape(image, [batch_size, 75, 1, 1024], name='image')
 
-    image = tf.placeholder(dtype = tf.float32,shape = [75,1,1024],name = 'image')
-    images  = tf.reshape(image, [1, 75, 1, 1024], name='image')
-
-    audio_tensor = tf.placeholder("float", [1,298,257,2])
+    audio_tensor = tf.placeholder("float", [batch_size,298,257,2])
 
     audio_kernel1 = tf.Variable(tf.random_normal([1,7,2,96]), dtype=tf.float32, name='audio_kernel1')
     audio_kernel2 = tf.Variable(tf.random_normal([7,1,96,96]), dtype=tf.float32, name='audio_kernel2')
@@ -140,8 +148,7 @@ if(__name__ == '__main__'):
     audio_conv15 = tf.nn.convolution(input=r14, filter=audio_kernel15, padding='SAME', strides=None, dilation_rate=None, name='audio_conv15', data_format=None)
     final_signal = tf.nn.relu(audio_conv15, name='final')
 
-
-    final_audio = tf.reshape(final_signal,[1,298,1,2056])
+    final_signal = tf.layers.batch_normalization(final_signal, axis=-1, momentum=0.99, epsilon=0.001)
 
     kernel1 = tf.Variable(tf.random_normal([7,1,1024,256]), dtype=tf.float32, name='kernel1')
     res1 = tf.nn.convolution(images, kernel1,padding = "SAME",strides = [1,1],dilation_rate = [1,1])
@@ -163,9 +170,39 @@ if(__name__ == '__main__'):
     res6 = tf.nn.convolution(reshape_conv5,kernel6,padding = "SAME",strides = [1,1],dilation_rate = [16,1])
     conv6 = tf.nn.relu(res6, name='conv6')
 
-    final_visual = tf.reshape(conv6,[1,298,1,256],name='final_visual')
+    final_audio = tf.reshape(final_signal, [batch_size,298,1,2056], name='final_reshaped_audio_signal')
+    final_visual = tf.reshape(conv6, [batch_size,298,1,256], name='final_visual')
 
-    final_input = tf.concat([final_audio,final_visual],3)
+    final_input = tf.concat([final_audio,final_visual], 3)
+    final_input = tf.reshape(final_input, [batch_size, 298, 2312])
+    unstack_input = tf.unstack(final_input, 298,1)
+
+    lstm_fw_cell = rnn.BasicLSTMCell(lstm_hidden, forget_bias=1.0)
+    lstm_bw_cell = rnn.BasicLSTMCell(lstm_hidden, forget_bias=1.0)
+
+    outputs, _, _ = rnn.static_bidirectional_rnn(lstm_fw_cell, lstm_bw_cell, unstack_input, dtype=tf.float32)
+
+    fc1_output = fc(outputs, 600, tf.nn.relu)
+    fc2_output = fc(fc1_output, 600, tf.nn.relu)
+    fc3_output = fc(fc2_output, 257*2, tf.nn.sigmoid)
+
+    complex_mask = tf.reshape(fc3_output, [2, 298, 257])
+    complex_mask_result = tf.complex(complex_mask[0], complex_mask[1])
+    label_signal_tensor = tf.convert_to_tensor(label_spectrogram)
+    spectrogram_result = complex_mask_result * tf.convert_to_tensor(spectrogram)
+
+    loss_op = tf.losses.mean_squared_error(label_signal_tensor, spectrogram_result)
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.001)
+    train_op = optimizer.minimize(loss_op)
+
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        print(sess.run(final_input, feed_dict={audio_tensor:split_channel,image:i}).shape)
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            opp = sess.run(train_op, feed_dict={images:input_image, audio_tensor:split_channel})
+        
+
+
+
+
+
